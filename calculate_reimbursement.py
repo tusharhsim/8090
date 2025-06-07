@@ -1,45 +1,83 @@
 import sys
 
 
-def calculate_reimbursement(trip_duration_days: int,
-                            miles_traveled: float,
-                            total_receipts_amount: float) -> float:
-    d, m, r = trip_duration_days, miles_traveled, total_receipts_amount
+def calculate_reimbursement(days: int, miles: float, receipts: float) -> float:
+    """
+    Estimate reimbursement for a business trip.
 
-    # 1. Mileage
-    mileage = (
-            1.05 * min(m, 100) +
-            0.75 * max(0, min(m, 1000) - 100) +
-            0.25 * max(0, m - 1000)
-    )
+    Parameters
+    ----------
+    days : int
+        Total trip duration in whole days.
+    miles : float
+        Total ground-travel mileage for the trip.
+    receipts : float
+        Dollar amount of submitted receipts.
 
-    # 2. Receipts (diminishing-return ladder)
-    receipts = (
-            1.00 * min(r, 600) +
-            0.45 * max(0, min(r, 1600) - 600) +
-            0.10 * max(0, r - 1600)
-    )
+    Returns
+    -------
+    float
+        Predicted refund, rounded to two decimals.
+    """
 
-    # 3. Base per-diem
-    per_diem = 30 * d
-    if d == 5:
-        per_diem *= 1.25
-    elif 6 <= d <= 7:
-        per_diem *= 1.10
-    else:
-        per_diem *= 0.85  # short or very long
+    # ------------------------------------------------------------------
+    # 1.  Base daily allowance (per-diem) – simple flat rate
+    # ------------------------------------------------------------------
+    BASE_PER_DIEM = 100.0           # $/day
+    base_per_diem = BASE_PER_DIEM * days
 
-    # subtotal
-    total = mileage + receipts + per_diem
+    # ------------------------------------------------------------------
+    # 2.  Mileage reimbursement – tiered + cumulative
+    # ------------------------------------------------------------------
+    mileage_reimb = 0.0
+    remaining = miles
+    for tier_miles, rate in ((100, 0.58), (400, 0.45), (float("inf"), 0.35)):
+        take = min(remaining, tier_miles)
+        mileage_reimb += take * rate
+        remaining -= take
+        if remaining <= 0:
+            break
 
-    # 4. Efficiency / vacation tweaks
-    pace = m / d  # miles per day
-    if 180 <= pace <= 220:  total += 200  # efficiency bonus
-    if pace > 400:          total -= 150  # over-drive penalty
-    if d >= 8 and r / d > 100:  # vacation
-        total *= 0.70
+    # ------------------------------------------------------------------
+    # 3.  Receipts reimbursement – piece-wise diminishing-returns curve
+    # ------------------------------------------------------------------
+    def receipt_rate(total: float) -> float:
+        if total < 50:       return 0.40
+        if total < 300:      return 0.60
+        if total < 600:      return 0.75
+        if total <= 800:     return 0.85      # sweet spot
+        if total <= 1000:    return 0.65
+        return 0.55
 
-    return round(total, 2)
+    receipt_reimb = receipts * receipt_rate(receipts)
+
+    # ------------------------------------------------------------------
+    # 4.  Interaction bonuses / penalties
+    # ------------------------------------------------------------------
+    def duration_adj(d: int) -> float:
+        if d == 5:            return 0.15     # +15 %
+        if 4 <= d <= 6:       return 0.10     # +10 %
+        if d <= 3:            return -0.05    # −5 %
+        if d >= 9:            return -0.10    # −10 %
+        return 0.0
+
+    def efficiency_adj(eff: float) -> float:
+        # eff = miles per day
+        if 180 <= eff <= 220:               return 0.10   # +10 %
+        if 150 <= eff < 180 or 220 < eff <= 260:  return 0.05   # +5 %
+        if 100 <= eff < 150 or 260 < eff <= 300:  return 0.0
+        return -0.05                                   # −5 %
+
+    bonus_factor = 1.0 + duration_adj(days) + efficiency_adj(miles / days)
+
+    # Optional light randomization to mimic system noise (±5 %)
+    # import random; bonus_factor *= (1 + random.uniform(-0.05, 0.05))
+
+    # ------------------------------------------------------------------
+    # 5.  Final predicted refund
+    # ------------------------------------------------------------------
+    refund = (base_per_diem + mileage_reimb + receipt_reimb) * bonus_factor
+    return round(refund, 2)
 
 
 def main():
@@ -55,7 +93,8 @@ def main():
         print("All arguments must be numeric.")
         sys.exit(1)
 
-    print(calculate_reimbursement(distance, rate_per_unit, additional_fees))
+    total = calculate_reimbursement(distance, rate_per_unit, additional_fees)
+    print(f"{total:.2f}")
 
 
 if __name__ == "__main__":
